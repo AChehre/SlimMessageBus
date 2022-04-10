@@ -235,7 +235,7 @@ namespace SlimMessageBus.Host.Integration
                 this.store = store;
             }
 
-            public Task OnHandle(InternalMessage message, CancellationToken cancellationToken, Func<Task> next, IMessageBus bus, string path, IDictionary<string, object> headers)
+            public Task<object> OnHandle(InternalMessage message, CancellationToken cancellationToken, Func<Task<object>> next, IMessageBus bus, string path, IDictionary<string, object> headers)
             {
                 store.Add(new(unitOfWork.CorrelationId, nameof(InternalMessageProducerInterceptor)));
 
@@ -273,7 +273,7 @@ namespace SlimMessageBus.Host.Integration
                 this.store = store;
             }
 
-            public Task OnHandle(ExternalMessage message, CancellationToken cancellationToken, Func<Task> next, IMessageBus bus, string path, IDictionary<string, object> headers)
+            public Task<object> OnHandle(ExternalMessage message, CancellationToken cancellationToken, Func<Task<object>> next, IMessageBus bus, string path, IDictionary<string, object> headers)
             {
                 store.Add(new(unitOfWork.CorrelationId, nameof(ExternalMessageProducerInterceptor)));
 

@@ -39,11 +39,12 @@
         {
             var messageType = message.GetType();
 
+            var hasResponse = consumerSettings.ConsumerMode == ConsumerMode.RequestResponse;
+            var responseType = hasResponse ? consumerSettings.ResponseType : null;
+
             object response = null;
             Exception responseException = null;
             string requestId = null;
-
-            var hasResponse = consumerSettings.ConsumerMode == ConsumerMode.RequestResponse;
 
             if (hasResponse && (messageHeaders == null || !messageHeaders.TryGetHeader(ReqRespMessageHeaders.RequestId, out requestId)))
             {
@@ -77,8 +78,8 @@
                 try
                 {
                     var consumerInterceptors = runtimeTypeCache.ConsumerInterceptorType.ResolveAll(messageScope, messageType);
-                    //var handlerInterceptors = hasResponse ? runtimeTypeCache.HandlerInterceptorType.ResolveAll(messageScope, messageType) : null;
-                    if (consumerInterceptors != null /*|| handlerInterceptors != null*/)
+                    var handlerInterceptors = hasResponse ? runtimeTypeCache.HandlerInterceptorType.ResolveAll(messageScope, messageType, responseType) : null;
+                    if (consumerInterceptors != null || handlerInterceptors != null)
                     {
                         var next = () => ExecuteConsumer(nativeMessage, message, messageHeaders, consumerInstance, consumerInvoker);
 
@@ -93,17 +94,15 @@
                             }
                         }
 
-                        /*
                         if (handlerInterceptors != null)
                         {
-                            var handlerInterceptorType = runtimeTypeCache.HandlerInterceptorType.Get(messageType);
+                            var handlerInterceptorType = runtimeTypeCache.HandlerInterceptorType.Get(messageType, responseType);
                             foreach (var handlerInterceptor in handlerInterceptors)
                             {
                                 var interceptorParams = new object[] { message, ct, next, messageBus, consumerSettings.Path, messageHeaders, consumerInstance };
                                 next = () => (Task<object>)handlerInterceptorType.Method.Invoke(handlerInterceptor, interceptorParams);
                             }
                         }
-                        */
 
                         response = await next();
                     }

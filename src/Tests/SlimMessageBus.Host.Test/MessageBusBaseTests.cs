@@ -500,9 +500,13 @@
             var m = new SomeDerivedMessage();
 
             var producerInterceptorMock = new Mock<IProducerInterceptor<SomeDerivedMessage>>();
-            producerInterceptorMock.Setup(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()))
-                .Returns((SomeDerivedMessage m, CancellationToken token, Func<Task> next, IMessageBus bus, string topic, IDictionary<string, object> headers)
-                    => producerInterceptorCallsNext == true ? next() : Task.CompletedTask);
+            producerInterceptorMock.Setup(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task<object>>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()))
+                .Returns(async (SomeDerivedMessage m, CancellationToken token, Func<Task<object>> next, IMessageBus bus, string topic, IDictionary<string, object> headers)
+                    =>
+                    {
+                        if (producerInterceptorCallsNext == true) return await next();
+                        return null;
+                    });
 
             var publishInterceptorMock = new Mock<IPublishInterceptor<SomeDerivedMessage>>();
             publishInterceptorMock.Setup(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()))
@@ -540,7 +544,7 @@
 
             if (producerInterceptorCallsNext != null)
             {
-                producerInterceptorMock.Verify(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()), Times.Once);
+                producerInterceptorMock.Verify(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task<object>>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()), Times.Once);
             }
             producerInterceptorMock.VerifyNoOtherCalls();
 
@@ -586,9 +590,13 @@
             };
 
             var producerInterceptorMock = new Mock<IProducerInterceptor<RequestA>>();
-            producerInterceptorMock.Setup(x => x.OnHandle(request, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()))
-                .Returns((RequestA m, CancellationToken token, Func<Task> next, IMessageBus bus, string topic, IDictionary<string, object> headers)
-                    => producerInterceptorCallsNext == true ? next() : Task.CompletedTask);
+            producerInterceptorMock.Setup(x => x.OnHandle(request, It.IsAny<CancellationToken>(), It.IsAny<Func<Task<object>>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()))
+                .Returns((RequestA m, CancellationToken token, Func<Task<object>> next, IMessageBus bus, string topic, IDictionary<string, object> headers)
+                    =>
+                    {
+                        if (producerInterceptorCallsNext == true) return next();
+                        return Task.FromResult<object>(null);
+                    });
 
             var sendInterceptorMock = new Mock<ISendInterceptor<RequestA, ResponseA>>();
             sendInterceptorMock.Setup(x => x.OnHandle(request, It.IsAny<CancellationToken>(), It.IsAny<Func<Task<ResponseA>>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()))
@@ -634,7 +642,7 @@
 
             if (producerInterceptorCallsNext != null)
             {
-                producerInterceptorMock.Verify(x => x.OnHandle(request, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()), Times.Once);
+                producerInterceptorMock.Verify(x => x.OnHandle(request, It.IsAny<CancellationToken>(), It.IsAny<Func<Task<object>>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()), Times.Once);
             }
             producerInterceptorMock.VerifyNoOtherCalls();
 

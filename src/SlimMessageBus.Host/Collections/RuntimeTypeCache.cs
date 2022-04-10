@@ -9,7 +9,7 @@
         public GenericInterfaceTypeCache2 SendInterceptorType { get; }
 
         public GenericInterfaceTypeCache ConsumerInterceptorType { get; }
-        public GenericInterfaceTypeCache HandlerInterceptorType { get; }
+        public GenericInterfaceTypeCache2 HandlerInterceptorType { get; }
 
         public RuntimeTypeCache()
         {
@@ -18,7 +18,7 @@
             SendInterceptorType = new GenericInterfaceTypeCache2(typeof(ISendInterceptor<,>), nameof(ISendInterceptor<object, object>.OnHandle));
             
             ConsumerInterceptorType = new GenericInterfaceTypeCache(typeof(IConsumerInterceptor<>), nameof(IConsumerInterceptor<object>.OnHandle));
-            HandlerInterceptorType = new GenericInterfaceTypeCache(typeof(IRequestHandlerInterceptor<,>), nameof(IRequestHandlerInterceptor<object, object>.OnHandle));
+            HandlerInterceptorType = new GenericInterfaceTypeCache2(typeof(IRequestHandlerInterceptor<,>), nameof(IRequestHandlerInterceptor<object, object>.OnHandle));
         }
     }
 }

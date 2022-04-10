@@ -328,7 +328,6 @@ namespace SlimMessageBus.Host
             var publishInterceptors = RuntimeTypeCache.PublishInterceptorType.ResolveAll(resolver, actualMessageType);
             if (producerInterceptors != null || publishInterceptors != null)
             {
-
                 var next = () => PublishInternal(message, path, messageHeaders, cancellationToken, producerSettings);
 
                 // Note: In this particular order - we want the publish interceptor to be wrapped by produce interceptor
@@ -346,13 +345,19 @@ namespace SlimMessageBus.Host
 
                 if (producerInterceptors != null)
                 {
+                    // IProducerInterceptor<,> requires next() to return Task<object> 
+                    var nextSnapshot = next;
+                    var nextWithResult = () => nextSnapshot().ContinueWith<object>(x => null);
+
                     var producerInterceptorType = RuntimeTypeCache.ProducerInterceptorType.Get(actualMessageType);
                     foreach (var producerInterceptor in producerInterceptors)
                     {
                         // The params follow IPublishInterceptor<>.OnHandle parameters
-                        var interceptorParams = new object[] { message, cancellationToken, next, this, path, headers };
-                        next = () => (Task)producerInterceptorType.Method.Invoke(producerInterceptor, interceptorParams);
+                        var interceptorParams = new object[] { message, cancellationToken, nextWithResult, this, path, headers };
+                        nextWithResult = () => (Task<object>)producerInterceptorType.Method.Invoke(producerInterceptor, interceptorParams);
                     }
+
+                    next = nextWithResult;
                 }
 
                 await next();
@@ -465,24 +470,20 @@ namespace SlimMessageBus.Host
 
                 if (producerInterceptors != null)
                 {
+                    // The IProducerInterceptor<,> requires next() to return Task<object>
+                    var nextSnapshot = next;
+                    var nextWithObjectResult = () => nextSnapshot().ContinueWith(x => (object)x.Result);
+
                     var producerInterceptorType = RuntimeTypeCache.ProducerInterceptorType.Get(requestType);
                     foreach (var producerInterceptor in producerInterceptors)
                     {
                         // The params follow IPublishInterceptor<>.OnHandle parameters
-                        var interceptorParams = new object[] { request, cancellationToken, next, this, path, headers };
-
-                        next = () =>
-                        {
-                            var task = (Task)producerInterceptorType.Method.Invoke(producerInterceptor, interceptorParams);
-                            // Check resulting type, the IProducerInterceptor return a Task, not Task<TResponse>, the user might not `return next()`.
-                            if (task is Task<TResponse> typedTask)
-                            {
-                                return typedTask;
-                            }
-                            // if the producer does not return a typed task Task<T> we the default value 
-                            return task.ContinueWith(x => default(TResponse));
-                        };
+                        var interceptorParams = new object[] { request, cancellationToken, nextWithObjectResult, this, path, headers };
+                        nextWithObjectResult = () => (Task<object>)producerInterceptorType.Method.Invoke(producerInterceptor, interceptorParams);
                     }
+
+                    // Cast back to Task<TResponse>
+                    next = () => nextWithObjectResult().ContinueWith(x => (TResponse)x.Result);
                 }
 
                 return await next();
