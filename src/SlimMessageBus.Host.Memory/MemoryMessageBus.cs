@@ -3,6 +3,7 @@
     using System;
     using System.Collections.Generic;
     using System.Linq;
+    using System.Threading;
     using System.Threading.Tasks;
     using Microsoft.Extensions.Logging;
     using SlimMessageBus.Host.Config;
@@ -52,7 +53,7 @@
                 .ToDictionary(x => x.Key, x => x.Select(consumerSettings => new MessageHandler(consumerSettings, this)).ToList());
         }
 
-        public override async Task ProduceToTransport(Type messageType, object message, string path, byte[] messagePayload, IDictionary<string, object> messageHeaders = null)
+        public override async Task ProduceToTransport(Type messageType, object message, string path, byte[] messagePayload, IDictionary<string, object> messageHeaders, CancellationToken cancellationToken)
         {
             if (!_handlersByPath.TryGetValue(path, out var consumers) || consumers.Count == 0)
             {
@@ -65,12 +66,12 @@
             foreach (var consumer in consumers)
             {
                 _logger.LogDebug("Executing consumer {ConsumerType} on {Message}...", consumer.ConsumerSettings.ConsumerType, message);
-                await OnMessageProduced(messageType, message, path, messagePayload, messageHeaders, consumer);
+                await OnMessageProduced(messageType, message, path, messagePayload, messageHeaders, consumer, cancellationToken);
                 _logger.LogTrace("Executed consumer {ConsumerType}", consumer.ConsumerSettings.ConsumerType);
             }
         }
 
-        private async Task OnMessageProduced(Type messageType, object message, string path, byte[] messagePayload, IDictionary<string, object> messageHeaders, MessageHandler consumer)
+        private async Task OnMessageProduced(Type messageType, object message, string path, byte[] messagePayload, IDictionary<string, object> messageHeaders, MessageHandler consumer, CancellationToken cancellationToken)
         {
             object response = null;
             string requestId = null;

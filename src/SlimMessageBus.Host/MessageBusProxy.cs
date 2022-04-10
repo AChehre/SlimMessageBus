@@ -32,8 +32,8 @@
 
         #region Implementation of IPublishBus
 
-        public Task Publish<TMessage>(TMessage message, string path = null, IDictionary<string, object> headers = null)
-            => Target.Publish(typeof(TMessage), message, path: path, headers: headers, currentDependencyResolver: dependencyResolver);
+        public Task Publish<TMessage>(TMessage message, string path = null, IDictionary<string, object> headers = null, CancellationToken cancellationToken = default)
+            => Target.Publish(typeof(TMessage), message, path: path, headers: headers, cancellationToken: cancellationToken, currentDependencyResolver: dependencyResolver);
 
         #endregion
 

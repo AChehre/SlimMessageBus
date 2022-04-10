@@ -306,9 +306,9 @@ namespace SlimMessageBus.Host
             return path;
         }
 
-        public abstract Task ProduceToTransport(Type messageType, object message, string path, byte[] messagePayload, IDictionary<string, object> messageHeaders = null);
+        public abstract Task ProduceToTransport(Type messageType, object message, string path, byte[] messagePayload, IDictionary<string, object> messageHeaders = null, CancellationToken cancellationToken = default);
 
-        public virtual Task Publish(Type messageType, object message, string path = null, IDictionary<string, object> headers = null, IDependencyResolver currentDependencyResolver = null)
+        public virtual async Task Publish(Type messageType, object message, string path = null, IDictionary<string, object> headers = null, CancellationToken cancellationToken = default, IDependencyResolver currentDependencyResolver = null)
         {
             if (message == null) throw new ArgumentNullException(nameof(message));
             AssertActive();
@@ -328,10 +328,8 @@ namespace SlimMessageBus.Host
             var publishInterceptors = RuntimeTypeCache.PublishInterceptorType.ResolveAll(resolver, actualMessageType);
             if (producerInterceptors != null || publishInterceptors != null)
             {
-                // ToDo: Introduce CTs
-                var ct = new CancellationToken();
 
-                var next = () => PublishInternal(message, path, messageHeaders, producerSettings);
+                var next = () => PublishInternal(message, path, messageHeaders, cancellationToken, producerSettings);
 
                 // Note: In this particular order - we want the publish interceptor to be wrapped by produce interceptor
 
@@ -341,7 +339,7 @@ namespace SlimMessageBus.Host
                     foreach (var publishInterceptor in publishInterceptors)
                     {
                         // The params follow IPublishInterceptor<>.OnHandle parameters
-                        var interceptorParams = new object[] { message, ct, next, this, path, headers };
+                        var interceptorParams = new object[] { message, cancellationToken, next, this, path, headers };
                         next = () => (Task)publishInterceptorType.Method.Invoke(publishInterceptor, interceptorParams);
                     }
                 }
@@ -352,25 +350,26 @@ namespace SlimMessageBus.Host
                     foreach (var producerInterceptor in producerInterceptors)
                     {
                         // The params follow IPublishInterceptor<>.OnHandle parameters
-                        var interceptorParams = new object[] { message, ct, next, this, path, headers };
+                        var interceptorParams = new object[] { message, cancellationToken, next, this, path, headers };
                         next = () => (Task)producerInterceptorType.Method.Invoke(producerInterceptor, interceptorParams);
                     }
                 }
 
-                return next();
+                await next();
+                return;
             }
 
-            return PublishInternal(message, path, messageHeaders, producerSettings);
+            await PublishInternal(message, path, messageHeaders, cancellationToken, producerSettings);
         }
 
-        protected virtual Task PublishInternal(object message, string path, IDictionary<string, object> messageHeaders, ProducerSettings producerSettings)
+        protected virtual Task PublishInternal(object message, string path, IDictionary<string, object> messageHeaders, CancellationToken cancellationToken, ProducerSettings producerSettings)
         {
             OnProducedHook(message, path, producerSettings);
 
             var payload = Serializer.Serialize(producerSettings.MessageType, message);
 
             _logger.LogDebug("Producing message {Message} of type {MessageType} to path {Path}", message, producerSettings.MessageType, path);
-            return ProduceToTransport(producerSettings.MessageType, message, path, payload, messageHeaders);
+            return ProduceToTransport(producerSettings.MessageType, message, path, payload, messageHeaders, cancellationToken);
         }
 
         private void AddMessageHeaders(IDictionary<string, object> messageHeaders, IDictionary<string, object> headers, object message, ProducerSettings producerSettings)
@@ -414,7 +413,7 @@ namespace SlimMessageBus.Host
             return timeout;
         }
 
-        public virtual async Task<TResponseMessage> SendInternal<TResponseMessage>(object request, TimeSpan? timeout, string path, IDictionary<string, object> headers, CancellationToken cancellationToken, IDependencyResolver currentDependencyResolver = null)
+        public virtual async Task<TResponse> SendInternal<TResponse>(object request, TimeSpan? timeout, string path, IDictionary<string, object> headers, CancellationToken cancellationToken, IDependencyResolver currentDependencyResolver = null)
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
             AssertActive();
@@ -424,19 +423,13 @@ namespace SlimMessageBus.Host
             cancellationToken.ThrowIfCancellationRequested();
 
             var requestType = request.GetType();
+            var responseType = typeof(TResponse);
             var producerSettings = GetProducerSettings(requestType);
 
-            if (path == null)
-            {
-                path = GetDefaultPath(requestType, producerSettings);
-            }
+            path ??= GetDefaultPath(requestType, producerSettings);
+            timeout ??= GetDefaultRequestTimeout(requestType, producerSettings);
 
             OnProducedHook(request, path, producerSettings);
-
-            if (timeout == null)
-            {
-                timeout = GetDefaultRequestTimeout(requestType, producerSettings);
-            }
 
             var created = CurrentTime;
             var expires = created.Add(timeout.Value);
@@ -449,8 +442,59 @@ namespace SlimMessageBus.Host
             requestHeaders.SetHeader(ReqRespMessageHeaders.RequestId, requestId);
             requestHeaders.SetHeader(ReqRespMessageHeaders.Expires, expires);
 
+            var resolver = currentDependencyResolver ?? Settings.DependencyResolver;
+
+            var producerInterceptors = RuntimeTypeCache.ProducerInterceptorType.ResolveAll(resolver, requestType);
+            var sendInterceptors = RuntimeTypeCache.SendInterceptorType.ResolveAll(resolver, requestType, responseType);
+            if (producerInterceptors != null || sendInterceptors != null)
+            {
+                var next = () => SendInternal<TResponse>(request, path, requestType, responseType, producerSettings, created, expires, requestId, requestHeaders, cancellationToken);
+
+                // Note: In this particular order - we want the send interceptor to be wrapped by produce interceptor
+
+                if (sendInterceptors != null)
+                {
+                    var sendInterceptorType = RuntimeTypeCache.SendInterceptorType.Get(requestType, responseType);
+                    foreach (var sendInterceptor in sendInterceptors)
+                    {
+                        // The params follow IPublishInterceptor<>.OnHandle parameters
+                        var interceptorParams = new object[] { request, cancellationToken, next, this, path, headers };
+                        next = () => (Task<TResponse>)sendInterceptorType.Method.Invoke(sendInterceptor, interceptorParams);
+                    }
+                }
+
+                if (producerInterceptors != null)
+                {
+                    var producerInterceptorType = RuntimeTypeCache.ProducerInterceptorType.Get(requestType);
+                    foreach (var producerInterceptor in producerInterceptors)
+                    {
+                        // The params follow IPublishInterceptor<>.OnHandle parameters
+                        var interceptorParams = new object[] { request, cancellationToken, next, this, path, headers };
+
+                        next = () =>
+                        {
+                            var task = (Task)producerInterceptorType.Method.Invoke(producerInterceptor, interceptorParams);
+                            // Check resulting type, the IProducerInterceptor return a Task, not Task<TResponse>, the user might not `return next()`.
+                            if (task is Task<TResponse> typedTask)
+                            {
+                                return typedTask;
+                            }
+                            // if the producer does not return a typed task Task<T> we the default value 
+                            return task.ContinueWith(x => default(TResponse));
+                        };
+                    }
+                }
+
+                return await next();
+            }
+
+            return await SendInternal<TResponse>(request, path, requestType, responseType, producerSettings, created, expires, requestId, requestHeaders, cancellationToken);
+        }
+
+        private async Task<TResponseMessage> SendInternal<TResponseMessage>(object request, string path, Type requestType, Type responseType, ProducerSettings producerSettings, DateTimeOffset created, DateTimeOffset expires, string requestId, IDictionary<string, object> requestHeaders, CancellationToken cancellationToken)
+        {
             // record the request state
-            var requestState = new PendingRequestState(requestId, request, requestType, typeof(TResponseMessage), created, expires, cancellationToken);
+            var requestState = new PendingRequestState(requestId, request, requestType, responseType, created, expires, cancellationToken);
             PendingRequestStore.Add(requestState);
 
             if (_logger.IsEnabled(LogLevel.Trace))
@@ -463,16 +507,16 @@ namespace SlimMessageBus.Host
                 _logger.LogDebug("Sending request message {MessageType} to path {Path} with reply to {ReplyTo}", requestState, path, Settings.RequestResponse.Path);
                 await ProduceRequest(request, requestHeaders, path, producerSettings).ConfigureAwait(false);
             }
-            catch (PublishMessageBusException e)
+            catch (Exception e)
             {
-                _logger.LogDebug("Publishing of request message failed", e);
+                _logger.LogDebug(e, "Publishing of request message failed");
                 // remove from registry
                 PendingRequestStore.Remove(requestId);
                 throw;
             }
 
             // convert Task<object> to Task<TResponseMessage>
-            var responseUntyped = await requestState.TaskCompletionSource.Task.ConfigureAwait(true);
+            var responseUntyped = await requestState.TaskCompletionSource.Task.ConfigureAwait(false);
             return (TResponseMessage)responseUntyped;
         }
 
@@ -625,8 +669,8 @@ namespace SlimMessageBus.Host
 
         #region Implementation of IPublishBus
 
-        public virtual Task Publish<TMessage>(TMessage message, string path = null, IDictionary<string, object> headers = null)
-            => Publish(typeof(TMessage), message, path, headers);
+        public virtual Task Publish<TMessage>(TMessage message, string path = null, IDictionary<string, object> headers = null, CancellationToken cancellationToken = default)
+            => Publish(typeof(TMessage), message, path, headers, cancellationToken);
 
         #endregion
 

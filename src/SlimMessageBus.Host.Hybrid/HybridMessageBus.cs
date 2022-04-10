@@ -168,18 +168,18 @@
 
         #region Implementation of IPublishBus
 
-        public Task Publish<TMessage>(TMessage message, string path = null, IDictionary<string, object> headers = null)
+        public Task Publish<TMessage>(TMessage message, string path = null, IDictionary<string, object> headers = null, CancellationToken cancellationToken = default)
         {
             var bus = Route(message, path);
-            return bus.Publish(message, path, headers);
+            return bus.Publish(message, path, headers, cancellationToken);
         }
 
         #endregion
 
-        public Task Publish(Type messageType, object message, string path = null, IDictionary<string, object> headers = null, IDependencyResolver currentDependencyResolver = null)
+        public Task Publish(Type messageType, object message, string path = null, IDictionary<string, object> headers = null, CancellationToken cancellationToken = default, IDependencyResolver currentDependencyResolver = null)
         {
             var bus = Route(message, path);
-            return bus.Publish(messageType, message, path, headers, currentDependencyResolver);
+            return bus.Publish(messageType, message, path, headers, cancellationToken, currentDependencyResolver);
         }
 
         public Task<TResponseMessage> SendInternal<TResponseMessage>(object request, TimeSpan? timeout, string path, IDictionary<string, object> headers, CancellationToken cancellationToken, IDependencyResolver currentDependencyResolver = null)

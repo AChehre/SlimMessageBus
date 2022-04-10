@@ -36,8 +36,8 @@
         private readonly DateTimeOffset _timeZero;
         private DateTimeOffset _timeNow;
 
-        private const int TimeoutForA10 = 10;
-        private const int TimeoutDefault20 = 20;
+        private const int TimeoutFor5 = 5;
+        private const int TimeoutDefault10 = 10;
         private readonly Mock<IDependencyResolver> _dependencyResolverMock;
 
         public IList<(Type messageType, string name, object message)> _producedMessages;
@@ -60,7 +60,7 @@
                 .Produce<RequestA>(x =>
                 {
                     x.DefaultTopic("a-requests");
-                    x.DefaultTimeout(TimeSpan.FromSeconds(TimeoutForA10));
+                    x.DefaultTimeout(TimeSpan.FromSeconds(TimeoutFor5));
                 })
                 .Produce<RequestB>(x =>
                 {
@@ -69,7 +69,7 @@
                 .ExpectRequestResponses(x =>
                 {
                     x.ReplyToTopic("app01-responses");
-                    x.DefaultTimeout(TimeSpan.FromSeconds(TimeoutDefault20));
+                    x.DefaultTimeout(TimeSpan.FromSeconds(TimeoutDefault10));
                 })
                 .WithDependencyResolver(_dependencyResolverMock.Object)
                 .WithSerializer(new JsonMessageSerializer())
@@ -120,7 +120,7 @@
         }
 
         [Fact]
-        public void When_NoTimeoutProvided_Then_TakesDefaultTimeoutForRequestType()
+        public async Task When_NoTimeoutProvided_Then_TakesDefaultTimeoutForRequestTypeAsync()
         {
             // arrange
             var ra = new RequestA();
@@ -130,26 +130,28 @@
             var raTask = Bus.Send(ra);
             var rbTask = Bus.Send(rb);
 
-            WaitForTasks(2000, raTask, rbTask);
-
             // after 10 seconds
-            _timeNow = _timeZero.AddSeconds(TimeoutForA10 + 1);
+            _timeNow = _timeZero.AddSeconds(TimeoutFor5 + 1);
             Bus.TriggerPendingRequestCleanup();
 
             // assert
+            await WaitForTasks(2000, raTask, rbTask);
+
             raTask.IsCanceled.Should().BeTrue();
             rbTask.IsCanceled.Should().BeFalse();
 
             // adter 20 seconds
-            _timeNow = _timeZero.AddSeconds(TimeoutDefault20 + 1);
+            _timeNow = _timeZero.AddSeconds(TimeoutDefault10 + 1);
             Bus.TriggerPendingRequestCleanup();
+
+            await WaitForTasks(2000, rbTask);
 
             // assert
             rbTask.IsCanceled.Should().BeTrue();
         }
 
         [Fact]
-        public void When_ResponseArrives_Then_ResolvesPendingRequest()
+        public async Task When_ResponseArrives_Then_ResolvesPendingRequestAsync()
         {
             // arrange
             var r = new RequestA();
@@ -166,7 +168,7 @@
 
             // act
             var rTask = Bus.Send(r);
-            WaitForTasks(2000, rTask);
+            await WaitForTasks(2000, rTask);
             Bus.TriggerPendingRequestCleanup();
 
             // assert
@@ -177,7 +179,7 @@
         }
 
         [Fact]
-        public void When_ResponseArrivesTooLate_Then_ExpiresPendingRequest()
+        public async Task When_ResponseArrivesTooLate_Then_ExpiresPendingRequestAsync()
         {
             // arrange
             var r1 = new RequestA();
@@ -207,7 +209,7 @@
             _timeNow = _timeZero.AddSeconds(2);
             Bus.TriggerPendingRequestCleanup();
 
-            WaitForTasks(2000, r1Task, r2Task, r3Task);
+            await WaitForTasks(2000, r1Task, r2Task, r3Task);
 
             // assert
             r1Task.IsCompleted.Should().BeTrue("Response 1 should be completed");
@@ -244,13 +246,13 @@
             cts2.Dispose();
         }
 
-        private static void WaitForTasks(int millis, params Task[] tasks)
+        private static async Task WaitForTasks(int millis, params Task[] tasks)
         {
             try
             {
-                Task.WaitAll(tasks, millis);
+                await Task.WhenAny(Task.WhenAll(tasks), Task.Delay(millis));
             }
-            catch (AggregateException)
+            catch (Exception)
             {
                 // swallow
             }
@@ -563,7 +565,7 @@
 
         #region Overrides of BaseMessageBus
 
-        public override Task ProduceToTransport(Type messageType, object message, string path, byte[] messagePayload, IDictionary<string, object> messageHeaders)
+        public override Task ProduceToTransport(Type messageType, object message, string path, byte[] messagePayload, IDictionary<string, object> messageHeaders, CancellationToken cancellationToken = default)
         {
             OnProduced(messageType, path, message);
 

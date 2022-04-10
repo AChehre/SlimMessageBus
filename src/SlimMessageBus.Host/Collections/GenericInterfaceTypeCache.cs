@@ -21,11 +21,6 @@
             messageTypeToResolveIsEmpty = new SafeDictionaryWrapper<Type, bool>();
         }
 
-        private bool CreateIsEmpty(Type messageType)
-        {
-            throw new NotImplementedException();
-        }
-
         private GenericInterfaceType CreateInterceptorType(Type messageType)
         {
             var genericType = openGenericType.MakeGenericType(messageType);
