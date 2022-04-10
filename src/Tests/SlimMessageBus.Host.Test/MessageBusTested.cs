@@ -25,7 +25,7 @@
         public Func<Type, string, object, object> OnReply { get; set; }
         public Action<Type, string, object> OnProduced { get; set; }
 
-        #region Overrides of BaseMessageBus
+        #region Overrides of MessageBusBase
 
         public override Task ProduceToTransport(Type messageType, object message, string path, byte[] messagePayload, IDictionary<string, object> messageHeaders, CancellationToken cancellationToken = default)
         {
@@ -52,10 +52,6 @@
 
             return Task.CompletedTask;
         }
-
-        #endregion
-
-        #region Overrides of MessageBusBase
 
         public override DateTimeOffset CurrentTime => CurrentTimeProvider();
 

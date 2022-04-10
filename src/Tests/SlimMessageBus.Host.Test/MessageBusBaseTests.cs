@@ -480,136 +480,48 @@
                 x => x(Bus, It.IsAny<ProducerSettings>(), r, someRequestTopic), Times.Exactly(2)); // callback twice - at the producer and bus level
         }
 
-        [Fact]
-        public async Task When_Publish_Given_PublishInterceptorRegisteredInDI_Then_PublishInterceptorInvokedAndMessageDelivered()
+        [Theory]
+        [InlineData(1, null, null)]   // no interceptors
+        [InlineData(1, true, true)]   // both interceptors call next()
+        [InlineData(1, true, null)]   // producer interceptor calls next(), other does not exist
+        [InlineData(1, null, true)]   // publish interceptor calls next(), other does not exist
+        [InlineData(0, false, false)] // none of the interceptors calls next()
+        [InlineData(0, false, null)]  // producer interceptor does not call next()
+        [InlineData(0, null, false)]  // publish interceptor does not call next()
+        public async Task When_Publish_Given_InterceptorsInDI_Then_InterceptorInfluenceIfTheMessageIsDelivered(
+            int producedMessages, bool? producerInterceptorCallsNext, bool? publishInterceptorCallsNext)
         {
             // arrange
-            var someMessageTopic = "some-messages";
+            var topic = "some-messages";
 
             BusBuilder
-                .Produce<SomeMessage>(x => x.DefaultTopic(someMessageTopic));
-
-            var m = new SomeDerivedMessage();
-
-            var publishInterceptorMock = new Mock<IPublishInterceptor<SomeDerivedMessage>>();
-            publishInterceptorMock.Setup(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()))
-                .Callback((SomeDerivedMessage m, CancellationToken token, Func<Task> next, IMessageBus bus, string topic, IDictionary<string, object> headers) => next());
-
-            _dependencyResolverMock.Setup(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeDerivedMessage>>)))
-                .Returns(new[] { publishInterceptorMock.Object });
-
-            // act
-            await Bus.Publish(m);
-
-            // assert
-
-            // message delivered
-            _producedMessages.Count.Should().Be(1);
-            _producedMessages.Should().ContainSingle(x => x.MessageType == typeof(SomeMessage) && x.Message == m && x.Path == someMessageTopic);
-
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeDerivedMessage>>)), Times.Once);
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeMessage>>)), Times.Never);
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeDerivedMessage>>)), Times.Once);
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeMessage>>)), Times.Never);
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(ILoggerFactory)), Times.Once);
-            _dependencyResolverMock.VerifyNoOtherCalls();
-
-            publishInterceptorMock.Verify(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()), Times.Once);
-            publishInterceptorMock.VerifyNoOtherCalls();
-        }
-
-        [Fact]
-        public async Task When_Publish_Given_ProducerInterceptorRegisteredInDI_Then_ProducerInterceptorInvokedAndMessageDelivered()
-        {
-            // arrange
-            var someMessageTopic = "some-messages";
-
-            BusBuilder
-                .Produce<SomeMessage>(x => x.DefaultTopic(someMessageTopic));
+                .Produce<SomeMessage>(x => x.DefaultTopic(topic));
 
             var m = new SomeDerivedMessage();
 
             var producerInterceptorMock = new Mock<IProducerInterceptor<SomeDerivedMessage>>();
-            producerInterceptorMock.Setup(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()))
-                .Callback((SomeDerivedMessage m, CancellationToken token, Func<Task> next, IMessageBus bus, string topic, IDictionary<string, object> headers) => next());
-
-            _dependencyResolverMock.Setup(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeDerivedMessage>>)))
-                .Returns(new[] { producerInterceptorMock.Object });
-
-            // act
-            await Bus.Publish(m);
-
-            // assert
-
-            // message delivered
-            _producedMessages.Count.Should().Be(1);
-            _producedMessages.Should().ContainSingle(x => x.MessageType == typeof(SomeMessage) && x.Message == m && x.Path == someMessageTopic);
-
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeDerivedMessage>>)), Times.Once);
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeMessage>>)), Times.Never);
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeDerivedMessage>>)), Times.Once);
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeMessage>>)), Times.Never);
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(ILoggerFactory)), Times.Once);
-            _dependencyResolverMock.VerifyNoOtherCalls();
-
-            producerInterceptorMock.Verify(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()), Times.Once);
-            producerInterceptorMock.VerifyNoOtherCalls();
-        }
-
-        [Fact]
-        public async Task When_Publish_Given_ProducerInterceptorRegisteredInDIAndInterceptorSkipsNext_Then_ProducerInterceptorInvokedAndMessageNotDelivered()
-        {
-            // arrange
-            var someMessageTopic = "some-messages";
-
-            BusBuilder
-                .Produce<SomeMessage>(x => x.DefaultTopic(someMessageTopic));
-
-            var m = new SomeDerivedMessage();
-
-            var producerInterceptorMock = new Mock<IProducerInterceptor<SomeDerivedMessage>>();
-            producerInterceptorMock.Setup(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()))
-                .Returns(Task.CompletedTask);
-
-            _dependencyResolverMock.Setup(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeDerivedMessage>>)))
-                .Returns(new[] { producerInterceptorMock.Object });
-
-            // act
-            await Bus.Publish(m);
-
-            // assert
-
-            // message delivered
-            _producedMessages.Count.Should().Be(0);
-
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeDerivedMessage>>)), Times.Once);
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeMessage>>)), Times.Never);
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeDerivedMessage>>)), Times.Once);
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeMessage>>)), Times.Never);
-            _dependencyResolverMock.Verify(x => x.Resolve(typeof(ILoggerFactory)), Times.Once);
-            _dependencyResolverMock.VerifyNoOtherCalls();
-
-            producerInterceptorMock.Verify(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()), Times.Once);
-            producerInterceptorMock.VerifyNoOtherCalls();
-        }
-
-        [Fact]
-        public async Task When_Publish_Given_PublishInterceptorRegisteredInDIAndInterceptorSkipsNext_Then_PublishInterceptorInvokedAndMessageNotDelivered()
-        {
-            // arrange
-            var someMessageTopic = "some-messages";
-
-            BusBuilder
-                .Produce<SomeMessage>(x => x.DefaultTopic(someMessageTopic));
-
-            var m = new SomeDerivedMessage();
+            producerInterceptorMock.Setup(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()))
+                .Returns((SomeDerivedMessage m, CancellationToken token, Func<Task> next, IMessageBus bus, string topic, IDictionary<string, object> headers)
+                    => producerInterceptorCallsNext == true ? next() : Task.CompletedTask);
 
             var publishInterceptorMock = new Mock<IPublishInterceptor<SomeDerivedMessage>>();
-            publishInterceptorMock.Setup(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()))
-                .Returns(Task.CompletedTask);
+            publishInterceptorMock.Setup(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()))
+                .Returns((SomeDerivedMessage m, CancellationToken token, Func<Task> next, IMessageBus bus, string topic, IDictionary<string, object> headers)
+                    => publishInterceptorCallsNext == true ? next() : Task.CompletedTask);
 
-            _dependencyResolverMock.Setup(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeDerivedMessage>>)))
-                .Returns(new[] { publishInterceptorMock.Object });
+            if (producerInterceptorCallsNext != null)
+            {
+                _dependencyResolverMock
+                    .Setup(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeDerivedMessage>>)))
+                    .Returns(new[] { producerInterceptorMock.Object });
+            }
+
+            if (publishInterceptorCallsNext != null)
+            {
+                _dependencyResolverMock
+                    .Setup(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeDerivedMessage>>)))
+                    .Returns(new[] { publishInterceptorMock.Object });
+            }
 
             // act
             await Bus.Publish(m);
@@ -617,7 +529,7 @@
             // assert
 
             // message delivered
-            _producedMessages.Count.Should().Be(0);
+            _producedMessages.Count.Should().Be(producedMessages);
 
             _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeDerivedMessage>>)), Times.Once);
             _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeMessage>>)), Times.Never);
@@ -626,8 +538,115 @@
             _dependencyResolverMock.Verify(x => x.Resolve(typeof(ILoggerFactory)), Times.Once);
             _dependencyResolverMock.VerifyNoOtherCalls();
 
-            publishInterceptorMock.Verify(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()), Times.Once);
+            if (producerInterceptorCallsNext != null)
+            {
+                producerInterceptorMock.Verify(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()), Times.Once);
+            }
+            producerInterceptorMock.VerifyNoOtherCalls();
+
+            if (publishInterceptorCallsNext != null)
+            {
+                // Publish interceptor is called after Producer interceptor, if producer does not call next() the publish interceptor does not get a chance to fire
+                if (producerInterceptorCallsNext == null || producerInterceptorCallsNext == true)
+                {
+                    publishInterceptorMock.Verify(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()), Times.Once);
+                }
+            }
             publishInterceptorMock.VerifyNoOtherCalls();
+        }
+
+        [Theory]
+        [InlineData(1, null, null)]   // no interceptors
+        [InlineData(1, true, true)]   // both interceptors call next()
+        [InlineData(1, true, null)]   // producer interceptor calls next(), other does not exist
+        [InlineData(1, null, true)]   // send interceptor calls next(), other does not exist
+        [InlineData(0, false, false)] // none of the interceptors calls next()
+        [InlineData(0, false, null)]  // producer interceptor does not call next()
+        [InlineData(0, null, false)]  // send interceptor does not call next()
+        public async Task When_Send_Given_InterceptorsInDI_Then_InterceptorInfluenceIfTheMessageIsDelivered(
+            int producedMessages, bool? producerInterceptorCallsNext, bool? sendInterceptorCallsNext)
+        {
+            // arrange
+            var topic = "a-requests";
+
+            var request = new RequestA();
+
+            Bus.OnReply = (type, topicOnReply, requestOnReply) =>
+            {
+                if (topicOnReply == topic)
+                {
+                    var req = (RequestA)requestOnReply;
+                    // resolve only r1 request
+                    if (req.Id == request.Id)
+                    {
+                        return new ResponseA { Id = req.Id };
+                    }
+                }
+                return null;
+            };
+
+            var producerInterceptorMock = new Mock<IProducerInterceptor<RequestA>>();
+            producerInterceptorMock.Setup(x => x.OnHandle(request, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()))
+                .Returns((RequestA m, CancellationToken token, Func<Task> next, IMessageBus bus, string topic, IDictionary<string, object> headers)
+                    => producerInterceptorCallsNext == true ? next() : Task.CompletedTask);
+
+            var sendInterceptorMock = new Mock<ISendInterceptor<RequestA, ResponseA>>();
+            sendInterceptorMock.Setup(x => x.OnHandle(request, It.IsAny<CancellationToken>(), It.IsAny<Func<Task<ResponseA>>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()))
+                .Returns((RequestA m, CancellationToken token, Func<Task<ResponseA>> next, IMessageBus bus, string topic, IDictionary<string, object> headers)
+                    => sendInterceptorCallsNext == true ? next() : Task.FromResult<ResponseA>(null));
+
+            if (producerInterceptorCallsNext != null)
+            {
+                _dependencyResolverMock
+                    .Setup(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<RequestA>>)))
+                    .Returns(new[] { producerInterceptorMock.Object });
+            }
+
+            if (sendInterceptorCallsNext != null)
+            {
+                _dependencyResolverMock
+                    .Setup(x => x.Resolve(typeof(IEnumerable<ISendInterceptor<RequestA, ResponseA>>)))
+                    .Returns(new[] { sendInterceptorMock.Object });
+            }
+
+            // act
+            var response = await Bus.Send(request);
+
+            // assert
+
+            // message delivered
+            _producedMessages.Count.Should().Be(producedMessages);
+
+            if (producedMessages > 0)
+            {
+                response.Id.Should().Be(request.Id);
+            }
+            else
+            {
+                // when the interceptor does not call next() the response resolved to default (null)
+                response.Should().BeNull();
+            }
+
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<RequestA>>)), Times.Once);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<ISendInterceptor<RequestA, ResponseA>>)), Times.Once);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(ILoggerFactory)), Times.Once);
+            _dependencyResolverMock.VerifyNoOtherCalls();
+
+            if (producerInterceptorCallsNext != null)
+            {
+                producerInterceptorMock.Verify(x => x.OnHandle(request, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()), Times.Once);
+            }
+            producerInterceptorMock.VerifyNoOtherCalls();
+
+            if (sendInterceptorCallsNext != null)
+            {
+                // Publish interceptor is called after Producer interceptor, if producer does not call next() the publish interceptor does not get a chance to fire
+                if (producerInterceptorCallsNext == null || producerInterceptorCallsNext == true)
+                {
+                    sendInterceptorMock.Verify(x => x.OnHandle(request, It.IsAny<CancellationToken>(), It.IsAny<Func<Task<ResponseA>>>(), Bus, topic, It.IsAny<IDictionary<string, object>>()), Times.Once);
+                }
+            }
+            sendInterceptorMock.VerifyNoOtherCalls();
         }
 
         // ToDo: Add Send tests for interceptors
