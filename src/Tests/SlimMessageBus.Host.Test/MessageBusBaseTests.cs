@@ -6,6 +6,7 @@
     using System.Threading;
     using System.Threading.Tasks;
     using FluentAssertions;
+    using Microsoft.Extensions.Logging;
     using Moq;
     using SlimMessageBus.Host.Config;
     using SlimMessageBus.Host.DependencyResolver;
@@ -40,14 +41,16 @@
         private const int TimeoutDefault10 = 10;
         private readonly Mock<IDependencyResolver> _dependencyResolverMock;
 
-        public IList<(Type messageType, string name, object message)> _producedMessages;
+        public IList<ProducedMessage> _producedMessages;
+
+        public record ProducedMessage(Type MessageType, string Path, object Message);
 
         public MessageBusBaseTests()
         {
             _timeZero = DateTimeOffset.Now;
             _timeNow = _timeZero;
 
-            _producedMessages = new List<(Type messageType, string name, object message)>();
+            _producedMessages = new List<ProducedMessage>();
 
             _dependencyResolverMock = new Mock<IDependencyResolver>();
             _dependencyResolverMock.Setup(x => x.Resolve(It.IsAny<Type>())).Returns((Type t) =>
@@ -79,7 +82,7 @@
                     {
                         // provide current time
                         CurrentTimeProvider = () => _timeNow,
-                        OnProduced = (mt, n, m) => _producedMessages.Add((mt, n, m))
+                        OnProduced = (mt, n, m) => _producedMessages.Add(new(mt, n, m))
                     };
                     return bus;
                 });
@@ -283,9 +286,9 @@
             // assert
             _producedMessages.Count.Should().Be(3);
 
-            _producedMessages.Should().ContainSingle(x => x.messageType == typeof(SomeMessage) && x.message == m1 && x.name == someMessageTopic);
-            _producedMessages.Should().ContainSingle(x => x.messageType == typeof(SomeMessage) && x.message == m2 && x.name == someMessageTopic);
-            _producedMessages.Should().ContainSingle(x => x.messageType == typeof(SomeMessage) && x.message == m3 && x.name == someMessageTopic);
+            _producedMessages.Should().ContainSingle(x => x.MessageType == typeof(SomeMessage) && x.Message == m1 && x.Path == someMessageTopic);
+            _producedMessages.Should().ContainSingle(x => x.MessageType == typeof(SomeMessage) && x.Message == m2 && x.Path == someMessageTopic);
+            _producedMessages.Should().ContainSingle(x => x.MessageType == typeof(SomeMessage) && x.Message == m3 && x.Path == someMessageTopic);
 
             messageSerializerMock.Verify(x => x.Serialize(typeof(SomeMessage), m1), Times.Once);
             messageSerializerMock.Verify(x => x.Serialize(typeof(SomeMessage), m2), Times.Once);
@@ -309,7 +312,7 @@
 
             // assert
             _producedMessages.Count.Should().Be(1);
-            _producedMessages.Should().ContainSingle(x => x.messageType == typeof(SomeMessage) && x.message == m && x.name == someMessageTopic);
+            _producedMessages.Should().ContainSingle(x => x.MessageType == typeof(SomeMessage) && x.Message == m && x.Path == someMessageTopic);
         }
 
         [Fact]
@@ -336,7 +339,7 @@
 
             // assert
             _producedMessages.Count.Should().Be(1);
-            _producedMessages.Should().ContainSingle(x => x.messageType == typeof(SomeDerived2Message) && x.message == m && x.name == someMessageDerived2Topic);
+            _producedMessages.Should().ContainSingle(x => x.MessageType == typeof(SomeDerived2Message) && x.Message == m && x.Path == someMessageDerived2Topic);
         }
 
         [Fact]
@@ -502,13 +505,92 @@
 
             // message delivered
             _producedMessages.Count.Should().Be(1);
-            _producedMessages.Should().ContainSingle(x => x.messageType == typeof(SomeMessage) && x.message == m && x.name == someMessageTopic);
+            _producedMessages.Should().ContainSingle(x => x.MessageType == typeof(SomeMessage) && x.Message == m && x.Path == someMessageTopic);
 
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeDerivedMessage>>)), Times.Once);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeMessage>>)), Times.Never);
             _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeDerivedMessage>>)), Times.Once);
             _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeMessage>>)), Times.Never);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(ILoggerFactory)), Times.Once);
+            _dependencyResolverMock.VerifyNoOtherCalls();
 
             publishInterceptorMock.Verify(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()), Times.Once);
             publishInterceptorMock.VerifyNoOtherCalls();
+        }
+
+        [Fact]
+        public async Task When_Publish_Given_ProducerInterceptorRegisteredInDI_Then_ProducerInterceptorInvokedAndMessageDelivered()
+        {
+            // arrange
+            var someMessageTopic = "some-messages";
+
+            BusBuilder
+                .Produce<SomeMessage>(x => x.DefaultTopic(someMessageTopic));
+
+            var m = new SomeDerivedMessage();
+
+            var producerInterceptorMock = new Mock<IProducerInterceptor<SomeDerivedMessage>>();
+            producerInterceptorMock.Setup(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()))
+                .Callback((SomeDerivedMessage m, CancellationToken token, Func<Task> next, IMessageBus bus, string topic, IDictionary<string, object> headers) => next());
+
+            _dependencyResolverMock.Setup(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeDerivedMessage>>)))
+                .Returns(new[] { producerInterceptorMock.Object });
+
+            // act
+            await Bus.Publish(m);
+
+            // assert
+
+            // message delivered
+            _producedMessages.Count.Should().Be(1);
+            _producedMessages.Should().ContainSingle(x => x.MessageType == typeof(SomeMessage) && x.Message == m && x.Path == someMessageTopic);
+
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeDerivedMessage>>)), Times.Once);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeMessage>>)), Times.Never);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeDerivedMessage>>)), Times.Once);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeMessage>>)), Times.Never);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(ILoggerFactory)), Times.Once);
+            _dependencyResolverMock.VerifyNoOtherCalls();
+
+            producerInterceptorMock.Verify(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()), Times.Once);
+            producerInterceptorMock.VerifyNoOtherCalls();
+        }
+
+        [Fact]
+        public async Task When_Publish_Given_ProducerInterceptorRegisteredInDIAndInterceptorSkipsNext_Then_ProducerInterceptorInvokedAndMessageNotDelivered()
+        {
+            // arrange
+            var someMessageTopic = "some-messages";
+
+            BusBuilder
+                .Produce<SomeMessage>(x => x.DefaultTopic(someMessageTopic));
+
+            var m = new SomeDerivedMessage();
+
+            var producerInterceptorMock = new Mock<IProducerInterceptor<SomeDerivedMessage>>();
+            producerInterceptorMock.Setup(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()))
+                .Returns(Task.CompletedTask);
+
+            _dependencyResolverMock.Setup(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeDerivedMessage>>)))
+                .Returns(new[] { producerInterceptorMock.Object });
+
+            // act
+            await Bus.Publish(m);
+
+            // assert
+
+            // message delivered
+            _producedMessages.Count.Should().Be(0);
+
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeDerivedMessage>>)), Times.Once);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeMessage>>)), Times.Never);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeDerivedMessage>>)), Times.Once);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeMessage>>)), Times.Never);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(ILoggerFactory)), Times.Once);
+            _dependencyResolverMock.VerifyNoOtherCalls();
+
+            producerInterceptorMock.Verify(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()), Times.Once);
+            producerInterceptorMock.VerifyNoOtherCalls();
         }
 
         [Fact]
@@ -537,73 +619,17 @@
             // message delivered
             _producedMessages.Count.Should().Be(0);
 
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeDerivedMessage>>)), Times.Once);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IProducerInterceptor<SomeMessage>>)), Times.Never);
             _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeDerivedMessage>>)), Times.Once);
             _dependencyResolverMock.Verify(x => x.Resolve(typeof(IEnumerable<IPublishInterceptor<SomeMessage>>)), Times.Never);
+            _dependencyResolverMock.Verify(x => x.Resolve(typeof(ILoggerFactory)), Times.Once);
+            _dependencyResolverMock.VerifyNoOtherCalls();
 
             publishInterceptorMock.Verify(x => x.OnHandle(m, It.IsAny<CancellationToken>(), It.IsAny<Func<Task>>(), Bus, someMessageTopic, It.IsAny<IDictionary<string, object>>()), Times.Once);
             publishInterceptorMock.VerifyNoOtherCalls();
         }
-    }
 
-    public class MessageBusTested : MessageBusBase
-    {
-        public MessageBusTested(MessageBusSettings settings)
-            : base(settings)
-        {
-            // by default no responses will arrive
-            OnReply = (type, payload, req) => null;
-
-            OnBuildProvider();
-        }
-
-        public ProducerSettings Public_GetProducerSettings(Type messageType) => GetProducerSettings(messageType);
-
-        public int PendingRequestsCount => PendingRequestStore.GetCount();
-
-        public Func<Type, string, object, object> OnReply { get; set; }
-        public Action<Type, string, object> OnProduced { get; set; }
-
-        #region Overrides of BaseMessageBus
-
-        public override Task ProduceToTransport(Type messageType, object message, string path, byte[] messagePayload, IDictionary<string, object> messageHeaders, CancellationToken cancellationToken = default)
-        {
-            OnProduced(messageType, path, message);
-
-            if (messageType.GetInterfaces().Any(x => x.IsGenericType && x.GetGenericTypeDefinition() == typeof(IRequestMessage<>)))
-            {
-                var req = Serializer.Deserialize(messageType, messagePayload);
-
-                var resp = OnReply(messageType, path, req);
-                if (resp == null)
-                {
-                    return Task.CompletedTask;
-                }
-
-                messageHeaders.TryGetHeader(ReqRespMessageHeaders.RequestId, out string replyTo);
-
-                var resposeHeaders = CreateHeaders();
-                resposeHeaders.SetHeader(ReqRespMessageHeaders.RequestId, replyTo);
-
-                var responsePayload = Serializer.Serialize(resp.GetType(), resp);
-                return OnResponseArrived(responsePayload, replyTo, resposeHeaders);
-            }
-
-            return Task.CompletedTask;
-        }
-
-        #endregion
-
-        #region Overrides of MessageBusBase
-
-        public override DateTimeOffset CurrentTime => CurrentTimeProvider();
-
-        #endregion
-
-        public Func<DateTimeOffset> CurrentTimeProvider { get; set; } = () => DateTimeOffset.UtcNow;
-
-        public void TriggerPendingRequestCleanup()
-        {
-            PendingRequestManager.CleanPendingRequests();
-        }
+        // ToDo: Add Send tests for interceptors
     }
 }
