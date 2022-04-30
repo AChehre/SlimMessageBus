@@ -161,7 +161,7 @@
         }
 
         /// <summary>
-        /// Scans the specified assemblies (using reflection) for types that implement <see cref="IPublishInterceptor{TMessage}"/> or <see cref="IConsumerInterceptor{TMessage}"/> and adds them to DI.
+        /// Scans the specified assemblies (using reflection) for types that implement one of the interceptor interfaces (<see cref="IPublishInterceptor{TMessage}"/> or <see cref="IConsumerInterceptor{TMessage}"/>) and adds them to DI.
         /// This types will be use during message bus configuration.
         /// </summary>
         /// <param name="services"></param>
